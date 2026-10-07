@@ -1,0 +1,26 @@
+.venv/
+.pytest_cache/
+.ruff_cache/
+**/__pycache__/
+**/*.egg-info/
+*.py[cod]
+build/
+dist/
+
+logs/
+outputs/
+videos/
+wandb/
+
+.vscode/settings.json
+.vscode/launch.json
+pyrightconfig.json
+
+
+# Datasheets are not ours to publish; the rest of docs/ (media) is.
+# docs/hardware/
+
+# Generated from qube_servo2.urdf by Isaac Lab at the first start (holds absolute paths of this machine)
+src/Rotary_Pendulum_RL/assets/data/qube_servo2/usd/
+
+

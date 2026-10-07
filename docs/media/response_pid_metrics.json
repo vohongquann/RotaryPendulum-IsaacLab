@@ -1,0 +1,120 @@
+{
+  "checkpoint": "pretrained/rotary_pendulum_pid/model_1499.pt",
+  "num_envs": 256,
+  "ended_early": 3,
+  "balanced_whole_time_pct": 0.0,
+  "swung_up_pct": 100.0,
+  "swing_up_s_median": 0.4,
+  "swing_up_s_p95": 0.48,
+  "arm_steps": [
+    {
+      "command_deg": 60.0,
+      "from_deg": 0.0,
+      "settled_pct": 100.0,
+      "settling_s_median": 0.3200000000000003,
+      "settling_s_p95": 0.33000000000000007,
+      "overshoot_deg_median": 1.3489112854003906,
+      "overshoot_deg_p95": 2.1883636474609345,
+      "steady_error_deg_median": 0.23985977172851564,
+      "steady_error_deg_p95": 0.48094096374511686
+    },
+    {
+      "command_deg": -60.0,
+      "from_deg": 60.0,
+      "settled_pct": 100.0,
+      "settling_s_median": 0.5,
+      "settling_s_p95": 0.5099999999999998,
+      "overshoot_deg_median": 1.3437652587890625,
+      "overshoot_deg_p95": 1.9108299255371082,
+      "steady_error_deg_median": 0.19076499938964844,
+      "steady_error_deg_p95": 0.32608686828613276
+    },
+    {
+      "command_deg": 30.0,
+      "from_deg": -60.0,
+      "settled_pct": 100.0,
+      "settling_s_median": 0.40000000000000036,
+      "settling_s_p95": 0.41999999999999993,
+      "overshoot_deg_median": 1.365875244140625,
+      "overshoot_deg_p95": 2.0555511474609376,
+      "steady_error_deg_median": 0.13727085113525392,
+      "steady_error_deg_p95": 0.2175882720947265
+    },
+    {
+      "command_deg": 0.0,
+      "from_deg": 30.0,
+      "settled_pct": 100.0,
+      "settling_s_median": 0.23000000000000043,
+      "settling_s_p95": 0.240000000000002,
+      "overshoot_deg_median": 0.567200779914856,
+      "overshoot_deg_p95": 0.7852546095848082,
+      "steady_error_deg_median": 0.13875749485509004,
+      "steady_error_deg_p95": 0.19247649621218438
+    }
+  ],
+  "current_rms_a_balance": 0.1985346675849007,
+  "current_rms_a_swing_up": 0.3246548182566477,
+  "current_peak_a": 1.6584385633468628,
+  "voltage_rms_v_balance": 1.732287375203932,
+  "voltage_peak_v": 12.0,
+  "arm_kp_swing_up": {
+    "median": -0.5550614297389984,
+    "p5": -1.0,
+    "p95": -0.09900255389511647
+  },
+  "arm_kp_balance": {
+    "median": -0.609248548746109,
+    "p5": -1.0,
+    "p95": -0.1559117995202543
+  },
+  "arm_ki_swing_up": {
+    "median": 0.008711203932762146,
+    "p5": -0.052329020202159876,
+    "p95": 0.06198987886309622
+  },
+  "arm_ki_balance": {
+    "median": 0.007782932370901108,
+    "p5": -0.2726622849702835,
+    "p95": 0.06511277817189692
+  },
+  "arm_kd_swing_up": {
+    "median": 0.10000000149011612,
+    "p5": 0.033286144584417365,
+    "p95": 0.10000000149011612
+  },
+  "arm_kd_balance": {
+    "median": 0.10000000149011612,
+    "p5": 0.06857224442064762,
+    "p95": 0.10000000149011612
+  },
+  "pendulum_kp_swing_up": {
+    "median": 11.275034427642822,
+    "p5": 2.0645143508911135,
+    "p95": 29.653544998168933
+  },
+  "pendulum_kp_balance": {
+    "median": 13.648202419281006,
+    "p5": 5.200869750976563,
+    "p95": 53.59830989837642
+  },
+  "pendulum_ki_swing_up": {
+    "median": -0.44548045098781586,
+    "p5": -9.701094150543211,
+    "p95": 8.895516109466543
+  },
+  "pendulum_ki_balance": {
+    "median": -0.6610845327377319,
+    "p5": -14.401356077194214,
+    "p95": 9.593132925033569
+  },
+  "pendulum_kd_swing_up": {
+    "median": 8.860833644866943,
+    "p5": 4.043420600891113,
+    "p95": 10.0
+  },
+  "pendulum_kd_balance": {
+    "median": 8.875804901123047,
+    "p5": 5.388463711738586,
+    "p95": 10.0
+  }
+}
