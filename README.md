@@ -5,10 +5,6 @@
 <p align="center">
   <img src="docs/media/demo_pid.gif" alt="Swing-up, then the arm follows 0, -45, -90, -45, 0, 45, 90, 45, 0 degrees" width="720">
 </p>
-<p align="center"><sub>
-  Simulation, one robot: swing-up, then the arm command 0 → −45 → −90 → −45 → 0 → 45 → 90 → 45 → 0° (3 s each).
-  The green sphere marks where the pendulum tip belongs. Full-resolution video: <a href="docs/media/demo_pid.mp4">demo_pid.mp4</a> (1080p).
-</sub></p>
 
 ## Control diagram
 
@@ -43,18 +39,6 @@ one fixed scenario on 256 simulated robots, each with its own motor constants: s
 +30 and 0° ([scripts/evaluate_policy.py](scripts/evaluate_policy.py)).
 
 <p align="center"><img src="docs/media/response_pid.png" alt="Arm angle, pendulum angle, voltage and current over the scenario, median and 5-95 % band of 256 robots" width="720"></p>
-
-| | Result |
-|---|---|
-| Robots that ran the whole 22 s | 253 / 256 |
-| Swing-up from hanging | 100 % of robots, 0.40 s median (0.48 s for 95 %) |
-| Arm settles within ±5° after a step | 0.23 – 0.50 s |
-| Overshoot | about 1.4° |
-| Steady arm error | 0.14 – 0.24° median, under 0.5° for 95 % |
-| Motor voltage rms while balancing | 1.7 V |
-| Motor current | 0.20 A rms while balancing, 1.66 A peak (amplifier: 2 A peak) |
-
-All metrics: [docs/media/response_pid_metrics.json](docs/media/response_pid_metrics.json).
 
 <details>
 <summary>Training curves</summary>
@@ -147,27 +131,9 @@ pretrained/                     trained weights (checkpoint, ONNX / TorchScript 
 docs/media/                     video, GIF and charts of the README
 guide/                          documentation
 ```
-## Known limits
 
-- The robot geometry is the CAD of
-  [vohongquann/rotary-pendulum-matlab](https://github.com/vohongquann/rotary-pendulum-matlab) (arm 85.9 mm, pendulum
-  129 mm) with the Quanser workbook masses. None of it is measured on the real robot yet.
-- Some values are not published, so they are assumptions:
-  - PWM resolution;
-  - the spread of the motor constants;
-  - Coulomb friction (none in the model);
-  - current limit (none in the model).
-- Full list of assumptions: [guide/01_pendulum.md](guide/01_pendulum.md#13-still-assumptions) and
-  [guide/06_sim2real.md](guide/06_sim2real.md).
-- The simulation has no delay between a measurement and the policy's action. A real network call adds one.
 
-## Credits
 
-Built on [Isaac Lab](https://github.com/isaac-sim/IsaacLab).
-- **Robot asset:** from IsaacLabUTE.
-- **Project layout:** follows Drone_RL.
-- **Task:** follows the Quanser and MathWorks QUBE-Servo 2 work and Menzenbach (2019).
-- **Constants:** the Quanser QUBE-Servo 2 workbook and datasheet, and the identification of
-  [vision-based-furuta-pendulum](https://github.com/Data-Science-in-Mechanical-Engineering/vision-based-furuta-pendulum).
+## License
 
-License: see [LICENSE](LICENSE).
+[BSD-3-Clause](LICENSE), the license of Isaac Lab.
