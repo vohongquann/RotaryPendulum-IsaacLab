@@ -32,12 +32,9 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
 from isaaclab.envs import ManagerBasedRLEnv  # noqa: E402
-from isaaclab_rl.rsl_rl import (  # noqa: E402
-    RslRlVecEnvWrapper,
-    check_rsl_rl_version,
-    create_rsl_rl_runner,
-    handle_deprecated_rsl_rl_cfg,
-)
+from isaaclab.utils import to_dict  # noqa: E402
+from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper  # noqa: E402
+from rsl_rl.runners import OnPolicyRunner  # noqa: E402
 
 from Rotary_Pendulum_RL.rotary import rotary_cfg as C  # noqa: E402
 from Rotary_Pendulum_RL.rotary.rl_control.agents.rsl_rl_ppo_cfg import PidPPORunnerCfg  # noqa: E402
@@ -55,9 +52,8 @@ env_cfg.episode_length_s = DURATION_S + 1.0
 env_cfg.commands.heading_cmd.resampling_time_range = (1.0e9, 1.0e9)      # the scenario sets the command
 env = ManagerBasedRLEnv(env_cfg)
 agent_cfg = PidPPORunnerCfg()
-agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, check_rsl_rl_version())
 wrapped = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-runner = create_rsl_rl_runner(wrapped, agent_cfg)
+runner = OnPolicyRunner(wrapped, to_dict(agent_cfg), log_dir=None, device=agent_cfg.device)
 runner.load(args.checkpoint)
 policy = runner.get_inference_policy(device=env.device)
 
@@ -77,7 +73,12 @@ gains = np.zeros((steps, args.num_envs, 6))      # Kp1, Ki1, Kd1 (arm), Kp2, Ki2
 failed = torch.zeros(args.num_envs, dtype=torch.bool, device=env.device)
 
 command[:, 0] = 0.0
-obs = wrapped.get_observations()
+# The first steps after the scene is built throw some robots about (the arm jumps by radians with no input); later
+# steps and resets are clean. Take three steps, then reset: the scenario starts from a normal state.
+wrapped.reset()
+for _ in range(3):
+    wrapped.step(torch.zeros(wrapped.num_envs, wrapped.num_actions, device=env.device))
+obs, _ = wrapped.reset()
 with torch.inference_mode():
     for k in range(steps):
         command[:, 0] = math.radians(command_deg[k])
@@ -158,7 +159,7 @@ panels = [
     (arm_deg, "Arm angle θ₁ [deg]", "Arm follows the command"),
     (pendulum_error_deg, "Pendulum from upright [deg]", "Pendulum: swing-up from hanging (180°), then balanced"),
     (voltage, "Voltage [V]", f"Motor voltage the inner PID writes (limit ±{C.QUBE_V_MAX:.0f} V)"),
-    (current, "Current [A]", "Motor current (amplifier: 2 A peak, 0.5 A continuous)"),
+    (current, "Current [A]", "Motor current (stall at 12 V: 1.4 A)"),
 ]
 for ax, (data, ylabel, title) in zip(axes, panels):
     ax.set_facecolor(SURFACE)
@@ -177,7 +178,7 @@ axes[1].axhline(UPRIGHT_DEG, color=MUTED, linestyle=":", linewidth=1.0)
 axes[1].set_ylim(-5, 185)
 for limit in (-C.QUBE_V_MAX, C.QUBE_V_MAX):
     axes[2].axhline(limit, color=MUTED, linestyle=":", linewidth=1.0)
-for limit in (-2.0, 2.0):
+for limit in (-C.QUBE_V_MAX / C.QUBE_RM_OHM, C.QUBE_V_MAX / C.QUBE_RM_OHM):
     axes[3].axhline(limit, color=MUTED, linestyle=":", linewidth=1.0)
 axes[3].set_xlabel("Time [s]")
 axes[3].set_xlim(0, DURATION_S)

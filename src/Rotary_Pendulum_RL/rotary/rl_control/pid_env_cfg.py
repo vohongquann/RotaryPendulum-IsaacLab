@@ -3,15 +3,13 @@
     scene:        ground, light, the rotary pendulum (``rotary_cfg.ROTARY_CFG``), hanging down
     action:       6 gains (mdp.CascadePidAction), 100 Hz: the outer PID ``arm_pid`` (250 Hz) turns the arm angle error
                   into a pendulum angle setpoint theta2*, the inner PID ``pendulum_pid`` (500 Hz) turns the pendulum error
-                  to theta2* into the motor voltage -> PWM -> QUBE-Servo 2 motor -> torque; both run on the measured
-                  angles and filtered velocities, like the firmware would (guide/07_cascade_pid.md)
+                  to theta2* into the motor voltage -> PWM -> QUBE-Servo 2 motor -> torque (guide/07_cascade_pid.md)
                       command theta1*, arm angle -> RL gains + PID (outer) -> theta2* -> RL gains + PID (inner) -> volts
-    observation:  arm angle error to the command, the commanded arm angle, sin and cos of the pendulum, both velocities,
-                  measured like the firmware does (encoder counts, filtered velocity), and the last 6 gains (12); the
-                  critic gets the same from the true state
+    observation:  arm angle error to the command, the commanded arm angle, sin and cos of the pendulum, both velocities and
+                  the last 6 gains (12), with Gaussian noise for the policy, none for the critic
     reward:       6 terms: pendulum up, arm on the command (wide and narrow), velocity and voltage penalties
 
-Physics runs at ``PHYSICS_HZ`` (500 Hz), the encoders at ``ENCODER_HZ`` (500 Hz), the policy at ``POLICY_HZ`` (100 Hz).
+Physics runs at ``PHYSICS_HZ`` (500 Hz), the inner PID at ``INNER_HZ`` (500 Hz), the policy at ``POLICY_HZ`` (100 Hz).
 """
 
 import math
@@ -28,6 +26,7 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
+from isaaclab.utils.noise import GaussianNoiseCfg as Gnoise
 
 from Rotary_Pendulum_RL.rotary import mdp
 from Rotary_Pendulum_RL.rotary import rotary_cfg as C
@@ -35,6 +34,11 @@ from Rotary_Pendulum_RL.rotary import rotary_cfg as C
 ARM = SceneEntityCfg("robot", joint_names=[C.ARM_JOINT])
 PENDULUM = SceneEntityCfg("robot", joint_names=[C.PENDULUM_JOINT])
 HEADING_COMMAND = "heading_cmd"
+
+# Gaussian noise the policy (the actor) sees on its measurements. The firmware counts 1024 edges per turn (6.1 mrad), whose
+# rounding is uniform noise of 6.1 / sqrt(12) = 1.8 mrad; its velocity is the difference of two counts, filtered.
+ANGLE_NOISE_STD = 0.002       # [rad], on the arm angle error and on sin / cos of the pendulum angle
+VELOCITY_NOISE_STD = 0.1      # [rad/s], on both velocities
 
 
 @configclass
@@ -53,37 +57,32 @@ class ActionsCfg:
 
 @configclass
 class PolicyCfg(ObsGroup):
-    """Observation (12): arm angle error to the command, the commanded arm angle, sin and cos of the pendulum, both velocities
-    (the encoders, as the firmware sees them), the last 6 gains. The state of the Quanser LQR (arm angle, pendulum angle,
+    """Observation (12): arm angle error to the command, the commanded arm angle, sin and cos of the pendulum, both velocities,
+    the last 6 gains, with Gaussian noise. The state of the Quanser LQR (arm angle, pendulum angle,
     both velocities) with the arm angle taken from the command."""
 
-    arm_angle_error = ObsTerm(func=mdp.arm_angle_error, params={"command_name": HEADING_COMMAND})
+    arm_angle_error = ObsTerm(
+        func=mdp.arm_angle_error, params={"command_name": HEADING_COMMAND}, noise=Gnoise(std=ANGLE_NOISE_STD)
+    )
     arm_command = ObsTerm(func=isaac_mdp.generated_commands, params={"command_name": HEADING_COMMAND})
-    pendulum_angle_sin = ObsTerm(func=mdp.pendulum_angle_sin)
-    pendulum_angle_cos = ObsTerm(func=mdp.pendulum_angle_cos)
-    arm_velocity = ObsTerm(func=mdp.arm_velocity)
-    pendulum_velocity = ObsTerm(func=mdp.pendulum_velocity)
+    pendulum_angle_sin = ObsTerm(func=mdp.pendulum_angle_sin, noise=Gnoise(std=ANGLE_NOISE_STD))
+    pendulum_angle_cos = ObsTerm(func=mdp.pendulum_angle_cos, noise=Gnoise(std=ANGLE_NOISE_STD))
+    arm_velocity = ObsTerm(func=mdp.arm_velocity, noise=Gnoise(std=VELOCITY_NOISE_STD))
+    pendulum_velocity = ObsTerm(func=mdp.pendulum_velocity, noise=Gnoise(std=VELOCITY_NOISE_STD))
     last_action = ObsTerm(func=isaac_mdp.last_action)
 
     def __post_init__(self):
-        self.enable_corruption = False
+        self.enable_corruption = True
         self.concatenate_terms = True
 
 
 @configclass
 class CriticCfg(PolicyCfg):
-    """Same terms from the true state (privileged)."""
+    """The same terms without the noise: the critic sees the true state (privileged)."""
 
     def __post_init__(self):
         super().__post_init__()
-        for term in (
-            self.arm_angle_error,
-            self.pendulum_angle_sin,
-            self.pendulum_angle_cos,
-            self.arm_velocity,
-            self.pendulum_velocity,
-        ):
-            term.params["measured"] = False
+        self.enable_corruption = False
 
 
 @configclass

@@ -3,7 +3,6 @@ device: cuda:0
 num_steps_per_env: 100
 init_at_random_ep_len: true
 max_iterations: 1500
-empirical_normalization: {}
 obs_groups:
   actor:
   - policy
@@ -59,6 +58,7 @@ algorithm:
   clip_param: 0.2
   normalize_advantage_per_mini_batch: false
   share_cnn_encoders: false
+  use_mixed_precision: false
   rnd_cfg: null
   symmetry_cfg: null
-policy: {}
+torch_compile_mode: null

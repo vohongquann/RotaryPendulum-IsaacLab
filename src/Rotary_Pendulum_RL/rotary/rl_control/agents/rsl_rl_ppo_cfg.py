@@ -1,6 +1,6 @@
 """PPO (rsl_rl 5.x) settings of the ``PID`` task.
 
-The actor sees the ``policy`` group (what the encoders measure), the critic the ``critic`` group (true state).
+The actor sees the ``policy`` group (with Gaussian noise), the critic the ``critic`` group (the same without noise).
 """
 from isaaclab.utils import configclass
 

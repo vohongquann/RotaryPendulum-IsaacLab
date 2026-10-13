@@ -1,16 +1,18 @@
-"""Action term: the policy writes the gains of two PIDs in cascade; the inner PID writes the motor voltage, as the firmware
+"""Action term: the policy writes the gains of two PIDs in cascade, the inner PID writes the motor voltage, as the firmware
 would. Explained step by step in guide/07_cascade_pid.md, the Isaac Lab hook in guide/08_action_term.md.
 
-    process_actions, 100 Hz:  a (N, 6) in [-1, 1] -> gains = a * (ARM_KP_MAX, ARM_KI_MAX, ARM_KD_MAX,
-                                                                  PENDULUM_KP_MAX, PENDULUM_KI_MAX, PENDULUM_KD_MAX)
-    apply_actions, every physics step (500 Hz):
-        read_encoders                   500 Hz (``ENCODER_HZ``)
-        arm_pid       (outer)  250 Hz   arm error to the command -> pendulum setpoint theta2*
-        pendulum_pid  (inner)  500 Hz   pendulum error to theta2* -> voltage, cut at +-QUBE_V_MAX -> PWM
-        drive_motor                     500 Hz: PWM, true shaft speed -> ``motor.QubeServo2Motor`` -> torque -> arm joint
+Isaac Lab calls the term twice:
 
-The encoders (``sensors.JointEncoders``) are read inside the action term, like the firmware reads them in its timer tick; the
-observations read them from here. The pendulum joint is passive.
+    process_actions   once per policy step (100 Hz)     a in [-1, 1]^6  ->  the six gains
+    apply_actions     once per physics step (500 Hz)    runs the loops below
+
+and ``apply_actions`` runs, in this order:
+
+    arm_pid        outer loop  250 Hz   arm angle error to the command   ->  pendulum setpoint theta2*
+    pendulum_pid   inner loop  500 Hz   pendulum angle error to theta2*  ->  voltage V, cut at +-V_MAX  ->  PWM
+    drive_motor    every step           PWM and the arm speed  ->  ``motor.QubeServo2Motor``  ->  torque on the arm
+
+Both PIDs read the joint angles and velocities of the simulator as they are. The pendulum joint is passive.
 """
 from __future__ import annotations
 
@@ -26,75 +28,69 @@ from isaaclab.utils.math import wrap_to_pi
 
 from Rotary_Pendulum_RL.rotary import rotary_cfg as C
 from Rotary_Pendulum_RL.rotary.mdp.motor import QubeServo2Motor, duty_to_pwm
-from Rotary_Pendulum_RL.rotary.mdp.sensors import JointEncoders
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
-# Gain ranges: the policy writes a in [-1, 1], the gain is a times the largest value.
+# The policy writes a gain a in [-1, 1]; the gain is a times the largest value below.
+ARM_KP_MAX = 1.0           # outer loop [rad of lean per rad of arm error]: full lean at an error of 10 deg
+ARM_KI_MAX = 1.0           # outer loop [rad of lean per rad s]: full lean at an error integral of 0.17 rad s
+ARM_KD_MAX = 0.1           # outer loop [rad of lean per rad/s]: full lean at an arm speed of 1.7 rad/s
+PENDULUM_KP_MAX = 100.0    # inner loop [V/rad]: 12 V at a pendulum error of 0.12 rad (7 deg)
+PENDULUM_KI_MAX = 100.0    # inner loop [V/(rad s)]: 12 V at an error integral of 0.12 rad s
+PENDULUM_KD_MAX = 10.0     # inner loop [V s/rad]: 12 V at a pendulum speed of 1.2 rad/s
+
+# Largest lean of the pendulum the outer loop may ask for: a larger setpoint would drop the pendulum out of the inner
+# loop's reach.
 TILT_MAX = math.radians(10.0)
-"""Largest lean of the pendulum the outer loop may ask for [rad]: a larger setpoint would drop the pendulum out of the
-inner loop's reach."""
-ARM_KP_MAX = 1.0
-"""Outer loop, largest |Kp| [rad/rad]: the full lean at an arm error equal to it (10 deg)."""
-ARM_KI_MAX = 1.0
-"""Outer loop, largest |Ki| [rad/(rad s)]: the full lean once the arm error integral reaches 0.17 rad s."""
-ARM_KD_MAX = 0.1
-"""Outer loop, largest |Kd| [rad s/rad]: the full lean at an arm speed of 1.7 rad/s."""
-PENDULUM_KP_MAX = 100.0
-"""Inner loop, largest |Kp| [V/rad]: 12 V at a pendulum error of 0.12 rad (7 deg)."""
-PENDULUM_KI_MAX = 100.0
-"""Inner loop, largest |Ki| [V/(rad s)]: 12 V once the error integral reaches 0.12 rad s."""
-PENDULUM_KD_MAX = 10.0
-"""Inner loop, largest |Kd| [V s/rad]: 12 V at a pendulum speed of 1.2 rad/s."""
-OUTER_HZ = 250.0
-"""Rate of the outer (arm) loop. The inner (pendulum) loop runs on every encoder read, ``ENCODER_HZ``."""
+
+OUTER_HZ = 250.0           # rate of the outer (arm) loop; the inner (pendulum) loop runs at ``C.INNER_HZ``
 
 
 class CascadePidAction(ActionTerm):
-    """Positive gains are the stable sign of both loops (fixed-gain check from upright: inner Kp2 50, Kd2 2, outer Kp1 0.2,
-    Kd1 0.02 hold the arm on a 0.3 rad command within 0.5 deg)."""
+    """6 gains in, one motor voltage out (see the module docstring)."""
 
     cfg: "CascadePidActionCfg"
 
     def __init__(self, cfg: "CascadePidActionCfg", env: "ManagerBasedRLEnv"):
         super().__init__(cfg, env)                       # sets self.cfg, self._env, self._asset (the robot)
+
+        # The joints: ``joint_ids`` is [arm, pendulum], the order the observation terms rely on.
         self._arm_id = self._asset.find_joints(C.ARM_JOINT)[0]
         self._pendulum_id = self._asset.find_joints(C.PENDULUM_JOINT)[0]
-        self._joint_ids = self._arm_id + self._pendulum_id          # order of ``encoders`` columns: arm, pendulum
+        self._joint_ids = self._arm_id + self._pendulum_id
 
-        # Physics steps between two runs of each loop: 1 for the encoders and the inner loop (500 Hz), 2 for the outer loop
-        # (250 Hz). Both must be whole numbers of physics steps, and the outer loop must fall on an encoder read.
+        # How often each loop runs, in physics steps (1 = every step). Both must be whole numbers, and every outer
+        # tick must also be an inner tick.
         physics_dt = env.physics_dt
-        self._encoder_period = round(1.0 / (C.ENCODER_HZ * physics_dt))
+        self._inner_period = round(1.0 / (C.INNER_HZ * physics_dt))
         self._outer_period = round(1.0 / (OUTER_HZ * physics_dt))
-        if abs(self._encoder_period * physics_dt * C.ENCODER_HZ - 1.0) > 1e-6:
-            raise ValueError(f"the physics rate {1.0 / physics_dt} Hz is not a multiple of the encoder rate {C.ENCODER_HZ} Hz")
-        if self._outer_period % self._encoder_period != 0:
-            raise ValueError(f"the outer loop ({OUTER_HZ} Hz) must run on an encoder read ({C.ENCODER_HZ} Hz)")
+        if abs(self._inner_period * physics_dt * C.INNER_HZ - 1.0) > 1e-6:
+            raise ValueError(f"the physics rate {1.0 / physics_dt} Hz is not a multiple of the inner loop rate {C.INNER_HZ} Hz")
+        if self._outer_period % self._inner_period != 0:
+            raise ValueError(f"the outer loop ({OUTER_HZ} Hz) must run on an inner loop tick ({C.INNER_HZ} Hz)")
+        self.inner_dt = self._inner_period * physics_dt
         self.outer_dt = self._outer_period * physics_dt
-        self.inner_dt = self._encoder_period * physics_dt
+        self._tick = 0              # physics steps since the start, never reset: each loop runs on its own multiples
 
-        self.motor = QubeServo2Motor(self.num_envs, self.device, randomize=cfg.randomize_motor)
-        self.encoders = JointEncoders(self.num_envs, 2, self.inner_dt, self.device)
+        # The gains, as the policy last wrote them, and the largest value of each.
+        self._raw_actions = torch.zeros(self.num_envs, 6, device=self.device)       # a in [-1, 1]
+        self.gains = torch.zeros(self.num_envs, 6, device=self.device)              # Kp1 Ki1 Kd1 Kp2 Ki2 Kd2
         self._gain_max = torch.tensor(
             [ARM_KP_MAX, ARM_KI_MAX, ARM_KD_MAX, PENDULUM_KP_MAX, PENDULUM_KI_MAX, PENDULUM_KD_MAX], device=self.device
         )
-        self._raw_actions = torch.zeros(self.num_envs, self.action_dim, device=self.device)
-        self.gains = torch.zeros(self.num_envs, 6, device=self.device)        # Kp1, Ki1, Kd1, Kp2, Ki2, Kd2
-        self.arm_integral = torch.zeros(self.num_envs, device=self.device)    # I1 [rad s]
-        self.pendulum_integral = torch.zeros(self.num_envs, device=self.device)  # I2 [rad s]
-        self.pendulum_setpoint = torch.full((self.num_envs,), math.pi, device=self.device)  # theta2* [rad]
-        self._voltage = torch.zeros(self.num_envs, device=self.device)        # V [V], written by the inner loop
-        self._pwm = torch.zeros(self.num_envs, device=self.device)
-        # Physics steps since the start, never reset: each loop runs when it is a multiple of its period, like a timer tick.
-        self._tick = 0
 
-    @property
-    def joint_ids(self) -> list[int]:
-        """Arm and pendulum joint ids: the column order of ``encoders``."""
-        return self._joint_ids
+        # State of the loops.
+        self.arm_integral = torch.zeros(self.num_envs, device=self.device)          # I1 [rad s]
+        self.pendulum_integral = torch.zeros(self.num_envs, device=self.device)     # I2 [rad s]
+        self.pendulum_setpoint = torch.full((self.num_envs,), math.pi, device=self.device)   # theta2* [rad]
+        self._voltage = torch.zeros(self.num_envs, device=self.device)              # V [V], written by the inner loop
+        self._pwm = torch.zeros(self.num_envs, device=self.device)                  # the PWM counts of V
+
+        self.motor = QubeServo2Motor(self.num_envs, self.device, randomize=cfg.randomize_motor)
+
+    # ── what Isaac Lab reads ────────────────────────────────────────────────────────────
 
     @property
     def action_dim(self) -> int:
@@ -109,7 +105,15 @@ class CascadePidAction(ActionTerm):
         """The motor voltage the inner loop applies (N, 1) [V]."""
         return self._voltage.unsqueeze(-1)
 
+    @property
+    def joint_ids(self) -> list[int]:
+        """Arm and pendulum joint ids, in this order."""
+        return self._joint_ids
+
+    # ── called by Isaac Lab ─────────────────────────────────────────────────────────────
+
     def reset(self, env_ids=None):
+        """New episode for ``env_ids`` (None: all): gains, integrals, setpoint, voltage and motor back to rest."""
         env_ids = slice(None) if env_ids is None else env_ids
         self._raw_actions[env_ids] = 0.0
         self.gains[env_ids] = 0.0
@@ -119,54 +123,67 @@ class CascadePidAction(ActionTerm):
         self._voltage[env_ids] = 0.0
         self._pwm[env_ids] = 0.0
         self.motor.reset(env_ids)
-        self.encoders.reset(env_ids, self._asset.data.joint_pos.torch[env_ids][:, self._joint_ids])
 
     def process_actions(self, actions: torch.Tensor):
+        """Policy step (100 Hz): the network output becomes the gains, held until the next policy step."""
         self._raw_actions[:] = actions
         self.gains[:] = actions.clamp(-1.0, 1.0) * self._gain_max
 
     def apply_actions(self):
-        if self._tick % self._encoder_period == 0:
-            self.read_encoders()
+        """Physics step (500 Hz): the loops that are due, then the motor."""
+        if self._tick % self._inner_period == 0:
             if self._tick % self._outer_period == 0:
                 self.arm_pid()
             self.pendulum_pid()
         self.drive_motor()
         self._tick += 1
 
-    def read_encoders(self):
-        """Read the true joint angles once: quantised angle and filtered velocity in ``encoders``."""
-        self.encoders.update(self._asset.data.joint_pos.torch[:, self._joint_ids])
+    # ── the loops ───────────────────────────────────────────────────────────────────────
 
     def arm_pid(self):
-        """Outer loop: e1 = measured arm angle - commanded angle (wrapped), I1 += e1 dt,
-        theta2* = pi + (Kp1 e1 + Ki1 I1 + Kd1 w1), the lean cut at +-TILT_MAX. w1 is the filtered encoder velocity
-        (the command is held, so it is de1/dt). I1 is cut where Ki1 I1 alone reaches TILT_MAX at the largest Ki1."""
+        """Outer loop. The arm angle error to the command gives the pendulum setpoint:
+
+            e1      = wrap(arm angle - command)
+            I1     += e1 dt                       cut where Ki1 I1 alone would reach TILT_MAX at the largest Ki1
+            lean    = Kp1 e1 + Ki1 I1 + Kd1 w1    w1: arm speed (the command is held, so w1 is d e1 / dt)
+            theta2* = pi + clamp(lean, +-TILT_MAX)
+        """
+        arm_angle = self._asset.data.joint_pos.torch[:, self._arm_id[0]]
+        arm_speed = self._asset.data.joint_vel.torch[:, self._arm_id[0]]
         command = self._env.command_manager.get_command(self.cfg.command_name)[:, 0]
-        error = wrap_to_pi(self.encoders.angle[:, 0] - command)
-        limit = TILT_MAX / ARM_KI_MAX
-        self.arm_integral[:] = (self.arm_integral + error * self.outer_dt).clamp(-limit, limit)
         kp, ki, kd = self.gains[:, 0], self.gains[:, 1], self.gains[:, 2]
-        lean = kp * error + ki * self.arm_integral + kd * self.encoders.velocity[:, 0]
+
+        error = wrap_to_pi(arm_angle - command)
+        integral_limit = TILT_MAX / ARM_KI_MAX
+        self.arm_integral[:] = (self.arm_integral + error * self.outer_dt).clamp(-integral_limit, integral_limit)
+
+        lean = kp * error + ki * self.arm_integral + kd * arm_speed
         self.pendulum_setpoint[:] = math.pi + lean.clamp(-TILT_MAX, TILT_MAX)
 
     def pendulum_pid(self):
-        """Inner loop: e2 = measured pendulum angle - theta2* (wrapped: 0 on the setpoint, about +-pi hanging),
-        I2 += e2 dt, V = -(Kp2 e2 + Ki2 I2 + Kd2 w2), cut at +-QUBE_V_MAX -> PWM. I2 is cut where Ki2 I2 alone reaches
-        QUBE_V_MAX at the largest Ki2."""
-        error = wrap_to_pi(self.encoders.angle[:, 1] - self.pendulum_setpoint)
-        limit = C.QUBE_V_MAX / PENDULUM_KI_MAX
-        self.pendulum_integral[:] = (self.pendulum_integral + error * self.inner_dt).clamp(-limit, limit)
+        """Inner loop. The pendulum angle error to the setpoint gives the voltage:
+
+            e2      = wrap(pendulum angle - theta2*)       0 on the setpoint, about +-pi when hanging
+            I2     += e2 dt                                 cut where Ki2 I2 alone would reach V_MAX at the largest Ki2
+            V       = -(Kp2 e2 + Ki2 I2 + Kd2 w2)           w2: pendulum speed; cut at +-V_MAX
+            PWM     = V / V_MAX * PWM_MAX
+        """
+        pendulum_angle = self._asset.data.joint_pos.torch[:, self._pendulum_id[0]]
+        pendulum_speed = self._asset.data.joint_vel.torch[:, self._pendulum_id[0]]
         kp, ki, kd = self.gains[:, 3], self.gains[:, 4], self.gains[:, 5]
-        voltage = -(kp * error + ki * self.pendulum_integral + kd * self.encoders.velocity[:, 1])
+
+        error = wrap_to_pi(pendulum_angle - self.pendulum_setpoint)
+        integral_limit = C.QUBE_V_MAX / PENDULUM_KI_MAX
+        self.pendulum_integral[:] = (self.pendulum_integral + error * self.inner_dt).clamp(-integral_limit, integral_limit)
+
+        voltage = -(kp * error + ki * self.pendulum_integral + kd * pendulum_speed)
         self._voltage[:] = voltage.clamp(-C.QUBE_V_MAX, C.QUBE_V_MAX)
         self._pwm[:] = duty_to_pwm(self._voltage / C.QUBE_V_MAX)
 
     def drive_motor(self):
-        """One physics step of the motor with the PWM held: torque from the PWM and the true arm speed, written as the
-        effort of the arm joint."""
-        arm_velocity = self._asset.data.joint_vel.torch[:, self._arm_id[0]]
-        torque = self.motor.step(self._pwm, arm_velocity, self._env.physics_dt)
+        """The motor for one physics step with the PWM held: torque from the PWM and the arm speed, written to the arm joint."""
+        arm_speed = self._asset.data.joint_vel.torch[:, self._arm_id[0]]
+        torque = self.motor.step(self._pwm, arm_speed, self._env.physics_dt)
         self._asset.set_joint_effort_target_index(target=torque.unsqueeze(-1), joint_ids=self._arm_id)
 
 
@@ -175,5 +192,5 @@ class CascadePidActionCfg(ActionTermCfg):
     class_type: type[ActionTerm] = CascadePidAction
 
     asset_name: str = MISSING
-    command_name: str = "heading_cmd"   # the commanded arm angle, target of the outer loop
-    randomize_motor: bool = True       # draw k_t, k_e and R every episode (``QubeServo2Motor``)
+    command_name: str = "heading_cmd"    # the commanded arm angle, the target of the outer loop
+    randomize_motor: bool = True         # draw k_t, k_e and R every episode (``QubeServo2Motor``)

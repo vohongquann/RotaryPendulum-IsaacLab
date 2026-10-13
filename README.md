@@ -16,17 +16,16 @@ flowchart LR
     OUT["outer PID, 250 Hz<br/>arm error → pendulum setpoint θ2*"] --> IN
     IN["inner PID, 500 Hz<br/>pendulum error → voltage"] -->|"±12 V → PWM"| MOT["QUBE-Servo 2 motor model<br/>current, back-EMF, torque"]
     MOT --> SIM["PhysX, 500 Hz"]
-    SIM --> ENC["encoders<br/>quantised angle, filtered velocity"]
-    ENC --> OUT
-    ENC --> IN
-    ENC --> POL
+    SIM -->|"angles, velocities"| OUT
+    SIM --> IN
+    SIM --> POL
 ```
 
 Task `Isaac-Rotary-Pendulum-PID`:
 
 - **Action (6):** the gains Kp, Ki, Kd of both loops, in [−1, 1], scaled to their ranges.
-- **Observation (12):** arm error to the command, the command, sin/cos θ2, both velocities (from the encoders), the last 6
-  gains.
+- **Observation (12):** arm error to the command, the command, sin/cos θ2, both velocities, the last 6 gains. The policy sees
+  them with Gaussian noise (angles 2 mrad, velocities 0.1 rad/s); the critic sees them clean.
 - **Goals:** pendulum upright; arm on the command, with one wide term and one narrow term that only pays while the
   pendulum is up.
 - **Penalties:** arm velocity, pendulum velocity and voltage, each squared.
@@ -34,9 +33,12 @@ Task `Isaac-Rotary-Pendulum-PID`:
 
 ## Results (simulation)
 
-Trained with PPO (rsl_rl): 4096 robots in parallel, 1500 iterations, 64 minutes on one RTX 3060. The final policy then ran
-one fixed scenario on 256 simulated robots, each with its own motor constants: start hanging, then arm steps to +60, −60,
-+30 and 0° ([scripts/evaluate_policy.py](scripts/evaluate_policy.py)).
+Trained with PPO (rsl_rl): 4096 robots in parallel, 1500 iterations, 69 minutes on one RTX 3060, with Gaussian noise on
+the policy's observations. The final policy then ran one fixed scenario on 256 simulated robots, each with its own motor
+constants: start hanging, then arm steps to +60, −60, +30 and 0° ([scripts/evaluate_policy.py](scripts/evaluate_policy.py)).
+253 of 256 kept going for the 22 s, the pendulum was up in 0.31 s (median), the arm settled within 5° of each step in
+0.23 to 0.49 s with about 1° overshoot and 0.4 to 0.5° error at rest, the motor current was 0.17 A rms while balancing and
+peaked at 1.7 A ([response_pid_metrics.json](docs/media/response_pid_metrics.json)).
 
 <p align="center"><img src="docs/media/response_pid.png" alt="Arm angle, pendulum angle, voltage and current over the scenario, median and 5-95 % band of 256 robots" width="720"></p>
 
@@ -76,7 +78,7 @@ conda activate env_isaaclab
 cd Rotary_Pendulum_RL
 pip install -e . --no-deps
 pip install pytest
-python -m pytest tests -q            # motor, encoders, URDF, task registration; no simulator window
+python -m pytest tests -q            # motor, URDF, task registration; no simulator window
 ```
 
 ## Usage
@@ -118,15 +120,15 @@ src/Rotary_Pendulum_RL/
     ├── rotary_cfg.py           robot, motor constants with sources, loop rates
     ├── mdp/
     │   ├── motor.py            PWM -> voltage -> current (back-EMF) -> torque
-    │   ├── sensors.py          encoders: quantised angle, filtered velocity
     │   ├── actions.py          CascadePidAction: the two PID loops (the hook into Isaac Lab)
     │   ├── commands.py         arm angle command
     │   └── observations.py, rewards.py, terminations.py
     └── rl_control/
         ├── pid_env_cfg.py      Isaac-Rotary-Pendulum-PID
         └── agents/             PPO settings
-scripts/                        evaluate_policy.py, record_demo.py, plot_training.py, build_qube_urdf.py
-tests/                          motor, encoders, URDF, registration
+scripts/                        evaluate_policy.py, record_demo.py, plot_training.py, plot_motor.py, build_qube_urdf.py
+firmware/                       ESP32 firmware: the two PIDs, encoders, PWM, serial link to the policy
+tests/                          motor, URDF, registration
 pretrained/                     trained weights (checkpoint, ONNX / TorchScript export, run settings)
 docs/media/                     video, GIF and charts of the README
 guide/                          documentation

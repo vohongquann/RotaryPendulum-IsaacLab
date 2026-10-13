@@ -24,9 +24,8 @@ PENDULUM_JOINT = "Revolute_2"
 # ── Loop rates ──────────────────────────────────────────────────────────────────────────
 """Physics step 1 / PHYSICS_HZ; the motor current is integrated at this rate."""
 PHYSICS_HZ = 500.0
-"""Rate at which the microcontroller reads the encoders (angle counts, filtered velocity) every 1 / ENCODER_HZ; the inner
-(pendulum) PID runs on every read (``mdp/actions.py``)."""
-ENCODER_HZ = 500.0
+"""Rate of the inner (pendulum) PID, every 1 / INNER_HZ (``mdp/actions.py``)."""
+INNER_HZ = 500.0
 """Rate of the policy, which writes the 6 PID gains: every 1 / POLICY_HZ. Must divide PHYSICS_HZ."""
 POLICY_HZ = 100.0
 
@@ -49,20 +48,18 @@ QUBE_JM = 4.0e-6
 """Nominal voltage of the winding [V] (Allied Motion 16705, NI datasheet): the voltage at which the rated 540 mA, 4050 RPM and
 89 mNm starting torque are given. The robot is not driven that high, see ``QUBE_V_MAX``."""
 QUBE_V_NOMINAL = 18.0
-"""Largest voltage the inner PID may write [V], the full scale of the PWM (100 % duty): +-12 V, the action limit of the SAC policies
-that run on the real QUBE-Servo 2 in github.com/vohongquann/rotary-pendulum-matlab (``env_swingup.m``, ``env_balance.m``). It sits
-between the +-10 V recommended and the +-15 V maximum output range of the amplifier (``params_system.m``; Quanser QUARC
-documentation, QUBE-Servo user manual), and keeps the stall current at 12 / 8.4 = 1.43 A, under the 2 A peak of the amplifier."""
+"""Largest voltage the inner PID may write [V]: the supply of the motor. On the real robot (github.com/vohongquann/rotary-pendulum-matlab,
+``embedded/``) an ESP32 drives a BTS7960 H-bridge from a 12 V supply, so 100 % duty is +-12 V. The stall current is then
+12 / 8.4 = 1.43 A. (The Quanser amplifier of the original QUBE-Servo 2 is limited to +-10 V, 2 A peak; this robot does not use it.)"""
 QUBE_V_MAX = 12.0
-"""Encoder counts per revolution, quadrature decoding (512 lines x 4); the angle is quantised to 2 pi / this."""
-QUBE_ENCODER_CPR = 2048
 
-# ── Electronics and firmware (ASSUMPTION: not published, match them to your microcontroller) ────────
-"""Full-scale PWM command (16-bit timer): duty = PWM / PWM_MAX, sign = direction pin."""
+# ── Electronics and firmware ──────────────────────────────────────────────────────────
+# The ESP32 writes a 16-bit PWM at 512 Hz (``ledcAttach``) to the BTS7960: one half-bridge gets the PWM, the other is held
+# low, so the winding sees +V_supply while the PWM is high and is shorted while it is low. The current ripples inside each
+# 1.95 ms PWM period (L / R is 0.14 ms), but the circuit is linear, so its average obeys the equation of the average voltage
+# D x V_supply that ``mdp/motor.py`` solves.
+"""Full-scale PWM command (16-bit timer): duty = PWM / PWM_MAX, sign = which half-bridge gets the PWM."""
 PWM_MAX = 65535
-"""Cut-off [rad/s] of the first-order high-pass 50 s / (s + 50) that estimates the velocity of each encoder: the filter of the
-Quanser QUBE-Servo 2 Simulink files (Rotary Pendulum Interface block, as taught in the Lorraine lab sheet), 50 rad/s = 7.96 Hz."""
-VELOCITY_FILTER_RAD_S = 50.0
 
 # ── Mechanics ───────────────────────────────────────────────────────────────────────────
 # Masses, inertias and geometry come from the URDF (``assets/data/qube_servo2/qube_servo2.urdf``, built from the CAD by

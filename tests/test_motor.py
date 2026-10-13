@@ -1,11 +1,10 @@
-"""QUBE-Servo 2 motor model: PWM -> voltage -> current -> torque, and the encoder."""
+"""QUBE-Servo 2 motor model: PWM -> voltage -> current -> torque."""
 import math
 
 import torch
 
 from Rotary_Pendulum_RL.rotary import rotary_cfg as C
-from Rotary_Pendulum_RL.rotary.mdp.motor import QubeServo2Motor, duty_to_pwm, pwm_to_voltage, quantize_angle
-from Rotary_Pendulum_RL.rotary.mdp.sensors import JointEncoders
+from Rotary_Pendulum_RL.rotary.mdp.motor import QubeServo2Motor, duty_to_pwm, pwm_to_voltage
 
 
 def motor(**kwargs):
@@ -56,19 +55,3 @@ def test_randomisation_stays_in_range_and_reset_clears_the_winding():
     m.step(torch.full((256,), float(C.PWM_MAX)), torch.zeros(256), 0.002)
     m.reset(torch.arange(10))
     assert m.current[:10].abs().max() == 0 and m.current[10:].abs().min() > 0
-
-
-def test_encoder_quantises_to_counts():
-    step = 2 * math.pi / C.QUBE_ENCODER_CPR
-    q = quantize_angle(torch.tensor([0.4 * step, 0.6 * step, -1.4 * step]))
-    assert torch.allclose(q, torch.tensor([0.0, step, -step]))
-
-
-def test_velocity_estimate_converges_to_a_constant_speed():
-    dt = 1.0 / C.ENCODER_HZ
-    enc = JointEncoders(1, 1, dt, "cpu")
-    angle = torch.zeros(1, 1)
-    for _ in range(100):
-        angle += 5.0 * dt                                  # 5 rad/s
-        enc.update(angle)
-    assert abs(enc.velocity.item() - 5.0) < 1.0            # the quantisation (1.5 rad/s per count at 500 Hz) shows up as noise

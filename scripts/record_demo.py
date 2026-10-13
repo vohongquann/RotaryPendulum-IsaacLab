@@ -136,12 +136,9 @@ def write_videos(log: np.ndarray, total: int):
 
 with launch_simulation(env_cfg, args):
     from isaaclab.envs import ManagerBasedRLEnv
-    from isaaclab_rl.rsl_rl import (
-        RslRlVecEnvWrapper,
-        check_rsl_rl_version,
-        create_rsl_rl_runner,
-        handle_deprecated_rsl_rl_cfg,
-    )
+    from isaaclab.utils import to_dict
+    from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
+    from rsl_rl.runners import OnPolicyRunner
 
     from isaaclab.app.settings_manager import get_settings_manager
     from isaaclab_physx.renderers.isaac_rtx_renderer_cfg import IsaacRtxRendererGlobalSettingsCfg
@@ -159,9 +156,8 @@ with launch_simulation(env_cfg, args):
 
     env = ManagerBasedRLEnv(env_cfg)
     agent_cfg = PidPPORunnerCfg()
-    agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, check_rsl_rl_version())
     wrapped = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-    runner = create_rsl_rl_runner(wrapped, agent_cfg)
+    runner = OnPolicyRunner(wrapped, to_dict(agent_cfg), log_dir=None, device=agent_cfg.device)
     runner.load(args.checkpoint)
     policy = runner.get_inference_policy(device=env.device)
 
@@ -193,7 +189,12 @@ with launch_simulation(env_cfg, args):
     total = WARMUP_STEPS + steps + 2        # a few more than the clip so the recorder closes it
     log = np.zeros((total, 3))
     command[:, 0] = math.radians(args.commands[0])
-    obs = wrapped.get_observations()
+    # The first steps after the scene is built throw some robots about (the arm jumps by radians with no input); later
+    # steps and resets are clean. Take three steps, then reset: the scenario starts from a normal state.
+    wrapped.reset()
+    for _ in range(3):
+        wrapped.step(torch.zeros(wrapped.num_envs, wrapped.num_actions, device=env.device))
+    obs, _ = wrapped.reset()
     with torch.inference_mode():
         for k in range(total):
             segment = min(max(k - WARMUP_STEPS, 0) // round(args.hold * policy_hz), len(args.commands) - 1)

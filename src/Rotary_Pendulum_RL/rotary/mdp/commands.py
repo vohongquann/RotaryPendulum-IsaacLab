@@ -39,7 +39,7 @@ class PivotHeadingCommand(CommandTerm):
 
     def _resample_command(self, env_ids: Sequence[int]):
         r = self.cfg.heading_range
-        self._command[env_ids, 0] = (torch.rand(len(env_ids), device=self.device) * 2.0 - 1.0) * r
+        self._command[env_ids, 0] = (torch.rand(self._command[env_ids, 0].shape[0], device=self.device) * 2.0 - 1.0) * r
 
     def _update_command(self):
         pass

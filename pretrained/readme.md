@@ -5,7 +5,7 @@ Trained weights shipped with the repo, so a fresh clone can play, evaluate and r
 ## rotary_pendulum_pid
 
 `Isaac-Rotary-Pendulum-PID`: the policy writes the 6 gains of the cascade PID (guide pages 7 and 8). PPO (rsl_rl 5.5.1),
-4096 envs, 1500 iterations, 64 min on an RTX 3060; copied from the run `logs/rsl_rl/rotary_pendulum_pid/2026-10-07_08-36-09`.
+4096 envs, 1500 iterations, 69 min on an RTX 3060, Gaussian noise on the actor's observations (angles 2 mrad, velocities 0.1 rad/s); copied from the run `logs/rsl_rl/rotary_pendulum_pid/2026-10-13_00-44-58`.
 Simulation results: [README](../README.md#results-simulation).
 
 | File | What it is |
